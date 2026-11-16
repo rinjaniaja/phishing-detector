@@ -1,18 +1,3 @@
-**---**
-
-**title: Detektor Phishing URL**
-
-**sdk: streamlit**
-
-**app\_file: app/app.py**
-
-**python\_version: "3.12"**
-
-**pinned: false**
-
-**---**
-
-
 
 **# Detektor Phishing URL**
 
