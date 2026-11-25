@@ -113,8 +113,10 @@ CSS_STATIS = """
     background-color: var(--box) !important; color: var(--accent) !important;
 }
 
-/* Sembunyikan tombol Deploy */
-[data-testid="stAppDeployButton"], .stDeployButton, .stAppDeployButton { display: none !important; }
+/* Sembunyikan tombol Deploy dan tombol bawaan Streamlit Cloud (Share, bintang, edit, GitHub) */
+[data-testid="stAppDeployButton"], .stDeployButton, .stAppDeployButton,
+[data-testid="stToolbarActions"], [data-testid="stToolbarActionButton"],
+[data-testid="stToolbar"] a[href*="github.com"] { display: none !important; }
 
 :root { color-scheme: var(--scheme); }
 
@@ -427,9 +429,13 @@ def jalankan_inspeksi():
         st.session_state["pesan"] = "URL tidak dapat diproses. Periksa kembali penulisannya."
         return
     df = pd.DataFrame([fitur])
-    p_rf, d_rf = inferensi("Random Forest", df)
-    p_xgb, d_xgb = inferensi("XGBoost", df)
     mode = st.session_state.get("mode_mesin", "Bandingkan keduanya")
+    p_rf = p_xgb = None
+    d_rf = d_xgb = False
+    if mode in ("Random Forest", "Bandingkan keduanya"):
+        p_rf, d_rf = inferensi("Random Forest", df)
+    if mode in ("XGBoost", "Bandingkan keduanya"):
+        p_xgb, d_xgb = inferensi("XGBoost", df)
     if mode == "Random Forest":
         p = p_rf
     elif mode == "XGBoost":
@@ -439,7 +445,8 @@ def jalankan_inspeksi():
     status, badge, gauge, warna = tentukan_status(p)
     st.session_state["hasil"] = {
         "url": url, "fitur": fitur, "p_rf": p_rf, "p_xgb": p_xgb, "dummy": d_rf or d_xgb,
-        "s_rf": tentukan_status(p_rf), "s_xgb": tentukan_status(p_xgb),
+        "s_rf": tentukan_status(p_rf) if p_rf is not None else None,
+        "s_xgb": tentukan_status(p_xgb) if p_xgb is not None else None,
         "p": p, "status": status, "badge": badge, "gauge": gauge, "warna": warna,
         "mode": mode, "temuan": hitung_temuan(fitur),
     }
@@ -554,40 +561,47 @@ if menu == "Periksa URL":
                     st.info("File model tidak ditemukan atau gagal dimuat, sehingga hasil memakai penilaian sementara berbasis aturan.")
 
                 persen = d["p"] * 100
-                (s_rf, b_rf, _, _), (s_x, b_x, _, _) = d["s_rf"], d["s_xgb"]
-                sepakat = s_rf == s_x
-                label_mode = "Rata-rata kedua model" if d["mode"] == "Bandingkan keduanya" else d["mode"]
+                banding = d["mode"] == "Bandingkan keduanya"
+                sepakat = banding and d["s_rf"][0] == d["s_xgb"][0]
+                label_mode = "Rata-rata kedua model" if banding else d["mode"]
+                badge_sepakat = ""
+                if banding:
+                    kelas_sepakat = "b-safe" if sepakat else "b-warn"
+                    teks_sepakat = "KEDUA MODEL SEPAKAT" if sepakat else "MODEL TIDAK SEPAKAT"
+                    badge_sepakat = f'<span class="badge {kelas_sepakat}" style="margin-left:6px">{teks_sepakat}</span>'
                 st.markdown(
                     f"""<div class="gauge"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
                     <div><span class="badge {d['badge']}" style="font-size:13px;padding:4px 12px">{d['status']}</span>
-                    <span class="badge {'b-safe' if sepakat else 'b-warn'}" style="margin-left:6px">
-                    {'KEDUA MODEL SEPAKAT' if sepakat else 'MODEL TIDAK SEPAKAT'}</span></div>
+                    {badge_sepakat}</div>
                     <div class="mono" style="font-size:26px;font-weight:800;color:{d['warna']}">{persen:.1f}%</div></div>
                     <div class="tile-note">Peluang phishing, {label_mode}</div>
                     <div class="gauge-track"><div class="gauge-fill {d['gauge']}" style="width:{min(max(persen, 2), 100):.1f}%"></div></div>
                     <div class="gauge-scale"><span>0% aman</span><span>35% waspada</span><span>65% phishing</span><span>100%</span></div>
                     </div>""", unsafe_allow_html=True)
 
-                if not sepakat:
+                if banding and not sepakat:
                     st.markdown('<div class="note warn">Kedua model memberi penilaian berbeda untuk URL ini. '
                                 'Perlakukan hasilnya dengan hati-hati dan periksa langsung ke situs resmi.</div>',
                                 unsafe_allow_html=True)
 
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.markdown(f'<div class="tile" style="padding:12px 14px;margin-bottom:12px">'
-                                f'<div style="display:flex;justify-content:space-between"><span class="tile-label">Random Forest</span>'
-                                f'<span class="badge {b_rf}">{s_rf}</span></div>'
-                                f'<div class="tile-val" style="font-size:20px">{d["p_rf"]:.1%}</div>'
-                                f'<div class="tile-note">Bobot tersebar pada HTTPS, jumlah garis miring, dan panjang path.</div></div>',
-                                unsafe_allow_html=True)
-                with m2:
-                    st.markdown(f'<div class="tile" style="padding:12px 14px;margin-bottom:12px">'
-                                f'<div style="display:flex;justify-content:space-between"><span class="tile-label">XGBoost</span>'
-                                f'<span class="badge {b_x}">{s_x}</span></div>'
-                                f'<div class="tile-val" style="font-size:20px">{d["p_xgb"]:.1%}</div>'
-                                f'<div class="tile-note">Bobot terpusat pada HTTPS dan jumlah garis miring.</div></div>',
-                                unsafe_allow_html=True)
+                def kartu_model(nama, p, st_, catatan):
+                    stat, lencana, _, _ = st_
+                    return (f'<div class="tile" style="padding:12px 14px;margin-bottom:12px">'
+                            f'<div style="display:flex;justify-content:space-between"><span class="tile-label">{nama}</span>'
+                            f'<span class="badge {lencana}">{stat}</span></div>'
+                            f'<div class="tile-val" style="font-size:20px">{p:.1%}</div>'
+                            f'<div class="tile-note">{catatan}</div></div>')
+
+                cat_rf = "Bobot tersebar pada HTTPS, jumlah garis miring, dan panjang path."
+                cat_xgb = "Bobot terpusat pada HTTPS dan jumlah garis miring."
+                if banding:
+                    m1, m2 = st.columns(2)
+                    m1.markdown(kartu_model("Random Forest", d["p_rf"], d["s_rf"], cat_rf), unsafe_allow_html=True)
+                    m2.markdown(kartu_model("XGBoost", d["p_xgb"], d["s_xgb"], cat_xgb), unsafe_allow_html=True)
+                elif d["mode"] == "Random Forest":
+                    st.markdown(kartu_model("Random Forest", d["p_rf"], d["s_rf"], cat_rf), unsafe_allow_html=True)
+                else:
+                    st.markdown(kartu_model("XGBoost", d["p_xgb"], d["s_xgb"], cat_xgb), unsafe_allow_html=True)
 
                 # Anatomi URL
                 url_teks = d["url"]
